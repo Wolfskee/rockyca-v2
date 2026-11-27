@@ -4,16 +4,20 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  MessageEvent,
   Param,
   ParseIntPipe,
   Patch,
   Post,
   Query,
   Req,
+  Res,
+  Sse,
   UseGuards,
 } from '@nestjs/common';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
-import { Request } from 'express';
+import { Request, Response } from 'express';
+import { Observable } from 'rxjs';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import {
   CreateContactDto,
@@ -45,6 +49,16 @@ export class ContactController {
   @UseGuards(JwtAuthGuard)
   listInquiries(@Query() query: ListInquiriesQueryDto) {
     return this.contactService.listInquiries(query);
+  }
+
+  @Sse('admin/inquiries/stream')
+  @UseGuards(JwtAuthGuard)
+  streamInquiries(
+    @Res({ passthrough: true }) res: Response,
+  ): Observable<MessageEvent> {
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    return this.contactService.streamInquiries();
   }
 
   @Patch('admin/inquiries/:id/read')

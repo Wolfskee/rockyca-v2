@@ -3,10 +3,13 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  MessageEvent,
   NotFoundException,
+  OnModuleDestroy,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as nodemailer from 'nodemailer';
+import type { ContactInquiry } from '@prisma/client';
+import { from, interval, map, merge, Observable, Subject } from 'rxjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateContactDto, ListInquiriesQueryDto } from './contact.dto';
 
@@ -19,24 +22,77 @@ interface TurnstileVerifyResponse {
   'error-codes'?: string[];
 }
 
+export type InquiryStreamEvent =
+  | {
+      type: 'inquiry.created';
+      inquiry: ContactInquiry;
+      unreadCount: number;
+    }
+  | {
+      type: 'inquiry.updated';
+      inquiry: ContactInquiry;
+      unreadCount: number;
+    };
+
 @Injectable()
-export class ContactService {
+export class ContactService implements OnModuleDestroy {
   private readonly logger = new Logger(ContactService.name);
+  private readonly inquiryEvents$ = new Subject<InquiryStreamEvent>();
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
   ) {}
 
+  onModuleDestroy(): void {
+    this.inquiryEvents$.complete();
+  }
+
+  streamInquiries(): Observable<MessageEvent> {
+    const initial$ = from(
+      this.prisma.contactInquiry.count({ where: { isRead: false } }),
+    ).pipe(
+      map(
+        (unreadCount): MessageEvent => ({
+          type: 'connected',
+          data: {
+            unreadCount,
+            timestamp: new Date().toISOString(),
+          },
+        }),
+      ),
+    );
+
+    const events$ = this.inquiryEvents$.asObservable().pipe(
+      map(
+        (event): MessageEvent => ({
+          type: event.type,
+          data: event,
+        }),
+      ),
+    );
+
+    const heartbeat$ = interval(25_000).pipe(
+      map(
+        (): MessageEvent => ({
+          type: 'heartbeat',
+          data: { timestamp: new Date().toISOString() },
+        }),
+      ),
+    );
+
+    return merge(initial$, events$, heartbeat$);
+  }
+
   async submit(dto: CreateContactDto, clientIp?: string) {
-    // Layer 1: Honeypot silent drop — bots filling hidden field get a fake 200 without sending mail
+    // Layer 1: Honeypot silent drop — bots filling hidden field get a fake 200 without saving
     if (dto.website && dto.website.trim().length > 0) {
       this.logger.warn(
         `Blocked contact spam via honeypot from IP=${clientIp ?? 'unknown'}`,
       );
       return {
         ok: true,
-        message: 'Your message has been sent. Thank you for contacting us!',
+        message: 'Your message has been received. Thank you for contacting us!',
       };
     }
 
@@ -65,7 +121,7 @@ export class ContactService {
     const subject = dto.subject;
     const message = dto.message.trim();
 
-    // Persist verified inquiry in PostgreSQL so leads are never lost
+    // Persist verified inquiry in PostgreSQL and push immediately to open admin inquiry pages
     const inquiry = await this.prisma.contactInquiry.create({
       data: {
         name,
@@ -77,19 +133,20 @@ export class ContactService {
       },
     });
 
-    // Send notification email via SMTP
-    await this.sendNotificationEmail({
-      name,
-      email,
-      phone: phone ?? 'N/A',
-      subject,
-      message,
+    const unreadCount = await this.prisma.contactInquiry.count({
+      where: { isRead: false },
+    });
+
+    this.inquiryEvents$.next({
+      type: 'inquiry.created',
+      inquiry,
+      unreadCount,
     });
 
     return {
       ok: true,
       id: inquiry.id,
-      message: 'Your message has been sent. Thank you for contacting us!',
+      message: 'Your message has been received. Thank you for contacting us!',
     };
   }
 
@@ -190,66 +247,6 @@ export class ContactService {
     }
   }
 
-  private async sendNotificationEmail(payload: {
-    name: string;
-    email: string;
-    phone: string;
-    subject: string;
-    message: string;
-  }) {
-    const host = this.configService.get<string>('SMTP_HOST');
-    const user = this.configService.get<string>('SMTP_USER');
-    const pass = this.configService.get<string>('SMTP_PASS');
-
-    if (!host || !user || !pass) {
-      this.logger.warn(
-        'SMTP credentials are not configured; inquiry saved to DB without sending email.',
-      );
-      return;
-    }
-
-    const port = Number(this.configService.get<string>('SMTP_PORT') || 465);
-    const secure =
-      this.configService.get<string>('SMTP_SECURE') !== 'false' && port === 465;
-    const fromEmail =
-      this.configService.get<string>('CONTACT_FROM_EMAIL') || user;
-    const recipient =
-      this.configService.get<string>('CONTACT_RECIPIENT_EMAIL') ||
-      'sales@rockyca.com';
-
-    const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure,
-      auth: { user, pass },
-    });
-
-    try {
-      await transporter.sendMail({
-        from: fromEmail,
-        to: recipient,
-        replyTo: payload.email,
-        subject: `${payload.subject} - ${payload.name}`,
-        text: [
-          `Name: ${payload.name}`,
-          `Email: ${payload.email}`,
-          `Phone: ${payload.phone}`,
-          `Subject: ${payload.subject}`,
-          '',
-          'Message:',
-          payload.message,
-        ].join('\n'),
-      });
-    } catch (error) {
-      this.logger.error(
-        `Failed to send contact email: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      throw new InternalServerErrorException(
-        'We received your message, but failed to deliver the email notification. Please call us at +1 (204)-256-5277.',
-      );
-    }
-  }
-
   async listInquiries(query: ListInquiriesQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
@@ -284,9 +281,21 @@ export class ContactService {
       throw new NotFoundException('Inquiry not found');
     }
 
-    return this.prisma.contactInquiry.update({
+    const updated = await this.prisma.contactInquiry.update({
       where: { id },
       data: { isRead },
     });
+
+    const unreadCount = await this.prisma.contactInquiry.count({
+      where: { isRead: false },
+    });
+
+    this.inquiryEvents$.next({
+      type: 'inquiry.updated',
+      inquiry: updated,
+      unreadCount,
+    });
+
+    return updated;
   }
 }
