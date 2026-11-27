@@ -1,0 +1,32 @@
+@import "tailwindcss";
+@import "@heroui/styles";
+
+@source "../../../../node_modules/@heroui/react/dist";
+
+@theme {
+  --color-brand-blue: #1e40af;
+  --color-brand-blue-dark: #1e3a8a;
+}
+
+/* Native modal dialog scroll containment per modern web guidance */
+dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog::backdrop {
+  background: rgb(0 0 0 / 0.85);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+/* Accessible visually-hidden utility for screen-reader text & honeypot */
+.sr-only-honeypot {
+  position: absolute;
+  left: -9999px;
+  top: auto;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}

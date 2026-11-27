@@ -1,0 +1,135 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum InventoryStatus {
+  in_stock
+  sold_out
+}
+
+enum Transmission {
+  auto
+  manual
+}
+
+enum FuelType {
+  gas
+  diesel
+  electric
+  hybrid
+}
+
+enum Drivetrain {
+  awd
+  fwd
+  rwd
+}
+
+enum CarType {
+  sedan
+  suv
+  pickup
+}
+
+model AdminUser {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("admin_users")
+}
+
+model Car {
+  id            Int             @id @default(autoincrement())
+  name          String          @db.VarChar(200)
+  make          String          @db.VarChar(100)
+  year          Int
+  mileage       Int
+  stockNumber   String          @unique @map("stock_number") @db.VarChar(50)
+  vin           String          @unique @db.VarChar(17)
+  type          CarType?
+  transmission  Transmission
+  fuel          FuelType
+  drivetrain    Drivetrain
+  engine        String          @db.VarChar(100)
+  cylinders     String          @db.VarChar(20)
+  color         String          @db.VarChar(50)
+  interiorColor String          @map("interior_color") @db.VarChar(50)
+  doors         Int
+  maxPassengers Int             @map("max_passengers")
+  description   String          @db.Text
+  carfaxKey     String?         @map("carfax_key") @db.VarChar(500)
+  carfaxUrl     String?         @map("carfax_url") @db.VarChar(1000)
+  price         Decimal         @db.Decimal(10, 2)
+  status        InventoryStatus @default(in_stock)
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  images VehicleImage[]
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([status, type, createdAt(sort: Desc)])
+  @@map("cars")
+}
+
+model LoadingRamp {
+  id          Int             @id @default(autoincrement())
+  stockNumber String          @unique @map("stock_number") @db.VarChar(50)
+  length      Decimal?        @db.Decimal(8, 2)
+  width       Decimal?        @db.Decimal(8, 2)
+  height      Decimal?        @db.Decimal(8, 2)
+  weight      Decimal?        @db.Decimal(8, 2)
+  capacity    Decimal?        @db.Decimal(8, 2)
+  material    String?         @db.VarChar(100)
+  description String          @db.Text
+  price       Decimal         @db.Decimal(10, 2)
+  status      InventoryStatus @default(in_stock)
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+
+  images VehicleImage[]
+
+  @@index([status, createdAt(sort: Desc)])
+  @@map("loading_ramps")
+}
+
+model VehicleImage {
+  id        Int          @id @default(autoincrement())
+  carId     Int?         @map("car_id")
+  rampId    Int?         @map("ramp_id")
+  s3Key     String       @unique @map("s3_key") @db.VarChar(500)
+  url       String       @db.VarChar(1000)
+  isPrimary Boolean      @default(false) @map("is_primary")
+  sortOrder Int          @default(0) @map("sort_order")
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  car  Car?         @relation(fields: [carId], references: [id], onDelete: Cascade)
+  ramp LoadingRamp? @relation(fields: [rampId], references: [id], onDelete: Cascade)
+
+  @@index([carId, isPrimary, createdAt(sort: Desc)])
+  @@index([rampId, isPrimary, createdAt(sort: Desc)])
+  @@map("vehicle_images")
+}
+
+model ContactInquiry {
+  id        Int      @id @default(autoincrement())
+  name      String   @db.VarChar(120)
+  email     String   @db.VarChar(200)
+  phone     String?  @db.VarChar(50)
+  subject   String   @db.VarChar(100)
+  message   String   @db.Text
+  ipAddress String?  @map("ip_address") @db.VarChar(64)
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt(sort: Desc)])
+  @@map("contact_inquiries")
+}
