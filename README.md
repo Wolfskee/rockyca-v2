@@ -57,8 +57,8 @@ npm run dev:web
     "AllowedMethods": ["PUT", "GET", "HEAD"],
     "AllowedOrigins": [
       "http://localhost:3000",
-      "https://rockyca.com",
-      "https://www.rockyca.com"
+      "https://YOURDOMAIN.com",
+      "https://www.YOURDOMAIN.com"
     ],
     "ExposeHeaders": ["ETag"],
     "MaxAgeSeconds": 3000
