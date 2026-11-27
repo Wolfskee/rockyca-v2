@@ -291,6 +291,10 @@ export async function adminMarkInquiryRead(id: number, isRead: boolean) {
   });
 }
 
+export function getAdminInquiriesStreamUrl(): string {
+  return `${getApiBaseUrl()}/admin/inquiries/stream`;
+}
+
 export async function requestS3Presign(payload: {
   folder: "cars" | "ramps" | "carfax";
   fileName: string;
